@@ -1,17 +1,19 @@
 from StringIO import StringIO
-from greenlet import GreenletExit
 import re
 import shutil
 import time
 import traceback
 import tarfile
 from contextlib import contextmanager
-from urllib import unquote
-from hashlib import md5
-from tempfile import mkstemp, mkdtemp
+from hashlib import md5, sha1
+import hmac
+from tempfile import mkstemp
+from tempfile import mkdtemp
 
-from eventlet import sleep
-from eventlet.green import select, subprocess, os, socket
+from eventlet.green import select
+from eventlet.green import subprocess
+from eventlet.green import os
+from eventlet.green import socket
 from eventlet.timeout import Timeout
 from eventlet.green.httplib import HTTPResponse
 import errno
@@ -19,31 +21,69 @@ import signal
 
 import zlib
 from os.path import exists
-from swift.common.swob import Request, Response, HTTPNotFound, \
-    HTTPPreconditionFailed, HTTPRequestTimeout, HTTPRequestEntityTooLarge, \
-    HTTPBadRequest, HTTPUnprocessableEntity, HTTPServiceUnavailable, \
-    HTTPClientDisconnect, HTTPInternalServerError, HeaderKeyDict, \
-    HTTPInsufficientStorage
-from swift.common.utils import normalize_timestamp, \
-    split_path, get_logger, mkdirs, disable_fallocate, config_true_value, \
-    hash_path, storage_directory
+from swift.common.request_helpers import get_name_and_placement
+from swift.common.storage_policy import POLICIES
+from swift.common.swob import Request
+from swift.common.swob import Response
+from swift.common.swob import HTTPNotFound
+from swift.common.swob import HTTPPreconditionFailed
+from swift.common.swob import HTTPRequestTimeout
+from swift.common.swob import HTTPRequestEntityTooLarge
+from swift.common.swob import HTTPBadRequest
+from swift.common.swob import HTTPUnprocessableEntity
+from swift.common.swob import HTTPServiceUnavailable
+from swift.common.swob import HTTPClientDisconnect
+from swift.common.swob import HTTPInternalServerError
+from swift.common.swob import HeaderKeyDict
+from swift.common.swob import HTTPInsufficientStorage
+from swift.common.swob import HTTPMethodNotAllowed
+from swift.common.swob import HTTPException
+from swift.common.utils import normalize_timestamp
+from swift.common.utils import get_logger
+from swift.common.utils import mkdirs
+from swift.common.utils import disable_fallocate
+from swift.common.utils import config_true_value
+from swift.common.utils import hash_path
+from swift.common.utils import storage_directory
+from swift.common.utils import get_log_line
 from swift.container.backend import ContainerBroker
-from swift.obj.diskfile import DiskFileManager, DiskFile, DiskFileWriter, \
-    write_metadata
+from swift.obj.diskfile import DiskFileManager
+from swift.obj.diskfile import DiskFile
+from swift.obj.diskfile import DiskFileWriter
+from swift.obj.diskfile import write_metadata
 from swift.common.constraints import check_utf8
-from swift.common.exceptions import DiskFileNotExist, DiskFileNoSpace, \
-    DiskFileDeviceUnavailable, DiskFileQuarantined
+from swift.common.exceptions import DiskFileNotExist
+from swift.common.exceptions import DiskFileNoSpace
+from swift.common.exceptions import DiskFileDeviceUnavailable
+from swift.common.exceptions import DiskFileQuarantined
 from swift.proxy.controllers.base import update_headers
-from zerocloud.common import TAR_MIMES, ACCESS_READABLE, ACCESS_CDR, \
-    ACCESS_WRITABLE, MD5HASH_LENGTH, parse_location, is_image_path, \
-    ACCESS_NETWORK, ACCESS_RANDOM, REPORT_VALIDATOR, REPORT_RETCODE, \
-    REPORT_ETAG, REPORT_CDR, REPORT_STATUS, SwiftPath, REPORT_LENGTH, \
-    REPORT_DAEMON, load_server_conf, is_swift_path
+from zerocloud import TAR_MIMES
+from zerocloud.common import ACCESS_READABLE
+from zerocloud.common import ACCESS_CDR
+from zerocloud.common import ACCESS_WRITABLE
+from zerocloud import MD5HASH_LENGTH
+from zerocloud.common import parse_location
+from zerocloud.common import ACCESS_NETWORK
+from zerocloud.common import ACCESS_RANDOM
+from zerocloud import REPORT_VALIDATOR
+from zerocloud import REPORT_RETCODE
+from zerocloud import REPORT_ETAG
+from zerocloud import REPORT_CDR
+from zerocloud import REPORT_STATUS
+from zerocloud.common import SwiftPath
+from zerocloud.common import ImagePath
+from zerocloud import REPORT_LENGTH
+from zerocloud import REPORT_DAEMON
+from zerocloud import load_server_conf
+from zerocloud import TIMEOUT_GRACE
 from zerocloud.configparser import ClusterConfigParser
 from zerocloud.proxyquery import gunzip_iter
-
-from zerocloud.tarstream import UntarStream, TarStream, \
-    REGTYPE, BLOCKSIZE, NUL
+from zerocloud.tarstream import UntarStream
+from zerocloud.tarstream import TarStream
+from zerocloud.tarstream import REGTYPE
+from zerocloud.tarstream import BLOCKSIZE
+from zerocloud.tarstream import NUL
+from zerocloud.tarstream import PAX_FORMAT
 import zerocloud.thread_pool as zpool
 
 try:
@@ -82,12 +122,13 @@ class ZDiskFileManager(DiskFileManager):
         super(ZDiskFileManager, self).__init__(conf, logger)
 
     def get_diskfile(self, device, partition, account, container, obj,
-                     **kwargs):
+                     policy_idx=0, **kwargs):
         dev_path = self.get_dev_path(device)
         if not dev_path:
             raise DiskFileDeviceUnavailable()
         return ZDiskFile(self, dev_path, self.threadpools[device],
-                         partition, account, container, obj, **kwargs)
+                         partition, account, container, obj,
+                         policy_idx=policy_idx, **kwargs)
 
     def get_container_broker(self, device, partition, account, container,
                              **kwargs):
@@ -113,10 +154,10 @@ class ZDiskFileManager(DiskFileManager):
 class ZDiskFile(DiskFile):
 
     def __init__(self, mgr, path, threadpool, partition, account,
-                 container, obj, _datadir=None):
+                 container, obj, _datadir=None, policy_idx=0):
         super(ZDiskFile, self).__init__(mgr, path, threadpool,
                                         partition, account, container, obj,
-                                        _datadir)
+                                        _datadir, policy_idx)
         self.tmppath = None
         self.channel_device = None
         self.new_timestamp = None
@@ -252,6 +293,20 @@ class DualReader(object):
         self.tail.close()
 
 
+def get_zerovm_sysimage_devices(conf):
+    """
+    :param dict conf:
+        A dictionary-like of configuration items.
+
+    :return:
+        If `conf` contains "zerovm_sysimage_devices", return a `dict`, where
+        keys are the well-known names of each device, and values are the full
+        path to the device file on the filesystem.
+    """
+    devices = conf.get('zerovm_sysimage_devices', '').split()
+    return dict(zip(devices[0::2], devices[1::2]))
+
+
 class ObjectQueryMiddleware(object):
 
     DEFAULT_POOL_CONFIG = 'default = WaitPool(10,3); ' \
@@ -272,7 +327,7 @@ class ObjectQueryMiddleware(object):
                                conf.get('zerovm_exename', 'zerovm').split()
                                if i.strip()]
         # timeout for zerovm between TERM signal and KILL signal
-        self.zerovm_kill_timeout = int(conf.get('zerovm_kill_timeout', 1))
+        self.zerovm_kill_timeout = float(conf.get('zerovm_kill_timeout', 1))
         # maximum nexe binary size
         self.zerovm_maxnexe = int(conf.get('zerovm_maxnexe', 256 * 1048576))
         # run the middleware in debug mode
@@ -282,13 +337,7 @@ class ObjectQueryMiddleware(object):
         # will print performance data to system log
         self.zerovm_perf = config_true_value(conf.get('zerovm_perf', 'no'))
         # name-path pairs for sysimage devices on this node
-        zerovm_sysimage_devices = {}
-        sysimage_list = [i.strip()
-                         for i in
-                         conf.get('zerovm_sysimage_devices', '').split()
-                         if i.strip()]
-        for k, v in zip(*[iter(sysimage_list)]*2):
-            zerovm_sysimage_devices[k] = v
+        zerovm_sysimage_devices = get_zerovm_sysimage_devices(conf)
         # thread pools for advanced scheduling in proxy middleware
         self.zerovm_thread_pools = {}
         threadpool_list = [i.strip()
@@ -343,7 +392,7 @@ class ObjectQueryMiddleware(object):
                 # zerovm manifest version
                 'Version': conf.get('zerovm_manifest_ver', '20130611'),
                 # timeout for zerovm to finish execution
-                'Timeout': int(conf.get('zerovm_timeout', 5)),
+                'Timeout': int(conf.get('zerovm_timeout', 10)),
                 # max nexe memory size
                 'Memory': int(conf.get('zerovm_maxnexemem',
                                        4 * 1024 * 1048576))
@@ -361,15 +410,15 @@ class ObjectQueryMiddleware(object):
         self.log_requests = config_true_value(conf.get('log_requests', 'true'))
 
     def get_disk_file(self, device, partition, account, container, obj,
-                      **kwargs):
+                      policy_idx=0, **kwargs):
         return self._diskfile_mgr.get_diskfile(
-            device, partition, account, container, obj, **kwargs)
+            device, partition, account, container, obj, policy_idx, **kwargs)
 
-    def send_to_socket(self, sock, zerovm_inputmnfst):
+    def send_to_socket(self, sock, zerovm_inputmnfst, timeout):
         SIZE = 8
         size = '0x%06x' % len(zerovm_inputmnfst)
         try:
-            with Timeout(self.parser_config['manifest']['Timeout']):
+            with Timeout(timeout + TIMEOUT_GRACE):
                 sock.sendall(size + zerovm_inputmnfst)
                 try:
                     size = int(sock.recv(SIZE), 0)
@@ -388,7 +437,7 @@ class ObjectQueryMiddleware(object):
         finally:
             sock.close()
 
-    def execute_zerovm(self, zerovm_inputmnfst_fn, zerovm_args=None):
+    def execute_zerovm(self, zerovm_inputmnfst_fn, timeout, zerovm_args=None):
         """
         Executes zerovm in a subprocess
 
@@ -419,8 +468,7 @@ class ObjectQueryMiddleware(object):
 
         def read_from_std(readable, stdout_data, stderr_data):
             rlist, _junk, __junk = \
-                select.select(readable, [], [],
-                              self.parser_config['manifest']['Timeout'])
+                select.select(readable, [], [], timeout + TIMEOUT_GRACE)
             if rlist:
                 for stream in rlist:
                     data = self.os_interface.read(stream.fileno(), 4096)
@@ -437,7 +485,7 @@ class ObjectQueryMiddleware(object):
         stderr_data = ''
         readable = [proc.stdout, proc.stderr]
         try:
-            with Timeout(self.parser_config['manifest']['Timeout'] + 1):
+            with Timeout(timeout + TIMEOUT_GRACE):
                 start = time.time()
                 perf = ''
                 while len(readable) > 0:
@@ -480,23 +528,16 @@ class ObjectQueryMiddleware(object):
             return False
         try:
             channels['boot'] = os.path.join(zerovm_tmp, 'boot')
-            fp = open(channels['boot'], 'wb')
-            reader = iter(lambda: nexe.read(self.disk_chunk_size), '')
-            for chunk in reader:
-                fp.write(chunk)
-            fp.close()
+            with open(channels['boot'], 'wb') as fp:
+                reader = iter(lambda: nexe.read(self.disk_chunk_size), '')
+                for chunk in reader:
+                    fp.write(chunk)
             return True
         except IOError:
             pass
         finally:
             tar.close()
         return False
-
-    def _placeholder(self):
-        try:
-            sleep(self.parser_config['manifest']['Timeout'])
-        except GreenletExit:
-            return
 
     def _debug_init(self, req):
         trans_id = req.headers.get('x-trans-id', '-')
@@ -556,7 +597,7 @@ class ObjectQueryMiddleware(object):
 
     def _create_zerovm_thread(self, zerovm_inputmnfst, zerovm_inputmnfst_fd,
                               zerovm_inputmnfst_fn, zerovm_valid,
-                              thrdpool, job_id):
+                              thrdpool, job_id, timeout):
         while zerovm_inputmnfst:
             written = self.os_interface.write(zerovm_inputmnfst_fd,
                                               zerovm_inputmnfst)
@@ -565,10 +606,11 @@ class ObjectQueryMiddleware(object):
         if zerovm_valid:
             zerovm_args = ['-s']
         thrd = thrdpool.spawn(job_id, self.execute_zerovm,
-                              zerovm_inputmnfst_fn, zerovm_args)
+                              zerovm_inputmnfst_fn, timeout, zerovm_args)
         return thrd
 
-    def _create_exec_error(self, nexe_headers, zerovm_retcode, zerovm_stdout):
+    def _create_exec_error(self, nexe_headers, zerovm_retcode,
+                           zerovm_stdout, response_channels):
         err = 'ERROR OBJ.QUERY retcode=%s, ' \
               ' zerovm_stdout=%s' \
               % (RETCODE_MAP[zerovm_retcode],
@@ -577,6 +619,7 @@ class ObjectQueryMiddleware(object):
         resp = HTTPInternalServerError(body=err)
         nexe_headers['x-nexe-status'] = 'ZeroVM runtime error'
         resp.headers = nexe_headers
+        _channel_cleanup(response_channels)
         return resp
 
     def get_writable_tmpdir(self, device):
@@ -588,15 +631,64 @@ class ObjectQueryMiddleware(object):
         return writable_tmpdir
 
     def zerovm_query(self, req):
-        """Handle zerovm execution requests for the Swift Object Server."""
+        """Handle zerovm execution requests for the Swift Object Server.
 
+        Many different HTTP response can be given. The types of responses and
+        the causes of each are as follows. Note that these response are handled
+        internally, and many pieces of information (such as some of the
+        headers) are not exposed to the end user/client.
+
+            * 200 OK
+            * 400 BadRequest
+                - No 'Content-Type' header
+                - Invalid 'Content-Type' header
+                - Missing `X-Timestamp` header, when a locally writable object
+                  is specified
+                - A non-GET request is sent to a container
+                - Cannot find threadpool specified by `X-Zerovm-Pool`
+                - No system map found in request
+                - No executable found in request
+                - Could not resolve channel path for device
+            * 404 Not Found
+                - Disk file for the specified object was not found
+                - Target container is deleted
+            * 408 Request Timeout
+                - File upload time exceeds `max_upload_time`
+            * 413 Request Entity Too Large
+                - Request `Content-Length` exceeds `zerovm_maxinput`
+                - Request body file size exceeds `zerovm_maxinput`
+                - Container database file exceeds `zerovm_maxinput`
+            * 422 Unprocessable Entity
+                - Failure to inflate gzipped image (body file)
+            * 499 Client Closed Request (Client Disconnect)
+                - Client (apparently) stop sending data before all of the
+                  expected data was sent (that is, the number of bytes sent is
+                  < the number specified in `Content-Length`).
+            * 500 Internal Server Error
+                - No `X-Zerocloud-Id` header
+                - System image (specified in system map) does not exist
+                - Cannot find daemon nexe in system image
+                - Cannot connect to daemon, even after daemon restart
+            * 503 Service Unavailable
+                - Unknown problem with thread pool/scheduling
+            * 507 Insufficient Storage
+                - Disk file device is unavailable. (Intuitively, this does not
+                  seem like the correct reponse code--404 seems better--but
+                  this is consistent with how Swift behaves.)
+
+        :param req:
+            :class:`swift.common.swob.Request`
+        :returns:
+            :class:`swift.common.swob.Response`
+        """
         debug_dir = self._debug_init(req)
         daemon_sock = req.headers.get('x-zerovm-daemon', None)
         if daemon_sock:
             daemon_sock = os.path.join(self.zerovm_sockets_dir, daemon_sock)
         job_id = req.headers.get('x-zerocloud-id', None)
         if not job_id:
-            return HTTPInternalServerError(request=req)
+            raise HTTPInternalServerError(
+                request=req, body='X-Zerocloud-Id header is missing')
         # print "URL: " + req.url
         nexe_headers = {
             'x-nexe-retcode': 0,
@@ -607,31 +699,29 @@ class ObjectQueryMiddleware(object):
             'x-nexe-system': ''
         }
 
-        try:
-            (device, partition, account, container, obj) = \
-                split_path(unquote(req.path), 3, 5, True)
-        except ValueError, err:
-            return HTTPBadRequest(body=str(err), request=req,
-                                  content_type='text/plain')
+        device, partition, account, container, obj, policy_idx = \
+            get_name_and_placement(req, 3, 5, True)
+        nexe_headers['x-nexe-policy'] = POLICIES.get_by_index(policy_idx).name
         local_object = LocalObject(account, container, obj)
         rbytes = self.parser_config['limits']['rbytes']
         if 'content-length' in req.headers \
                 and int(req.headers['content-length']) > rbytes:
-            return HTTPRequestEntityTooLarge(body='RPC request too large',
-                                             request=req,
-                                             content_type='text/plain',
-                                             headers=nexe_headers)
+            raise HTTPRequestEntityTooLarge(body='RPC request too large',
+                                            request=req,
+                                            content_type='text/plain',
+                                            headers=nexe_headers)
         if 'content-type' not in req.headers:
-            return HTTPBadRequest(request=req,
-                                  content_type='text/plain',
-                                  body='No content type',
-                                  headers=nexe_headers)
+            raise HTTPBadRequest(request=req,
+                                 content_type='text/plain',
+                                 body='No content type',
+                                 headers=nexe_headers)
         if not req.headers['Content-Type'] in TAR_MIMES:
-            return HTTPBadRequest(request=req,
-                                  body='Invalid Content-Type',
-                                  content_type='text/plain',
-                                  headers=nexe_headers)
+            raise HTTPBadRequest(request=req,
+                                 body='Invalid Content-Type',
+                                 content_type='text/plain',
+                                 headers=nexe_headers)
         access_type = req.headers.get('x-zerovm-access', '')
+        colocated = req.headers.get('x-nexe-colocated')
         if obj:
             try:
                 local_object.disk_file = \
@@ -639,52 +729,69 @@ class ObjectQueryMiddleware(object):
                                        partition,
                                        account,
                                        container,
-                                       obj)
+                                       obj,
+                                       policy_idx)
             except DiskFileDeviceUnavailable:
-                return HTTPInsufficientStorage(drive=device,
-                                               request=req)
+                if colocated:
+                    # we were sent an impossible co-location request
+                    # answer 404 and proxy will continue to another server
+                    raise HTTPNotFound(request=req)
+                # NOTE(larsbutler): If a disk file device is unavailable, one
+                # might logically think to return a "404 Not Found". However,
+                # Swift itself returns a "507 Insufficient Storage" in this
+                # case. So for consistency, we do that as well. I wonder if
+                # this is a Swift bug.
+                raise HTTPInsufficientStorage(drive=device,
+                                              request=req)
             if access_type == 'GET':
                 try:
                     local_object.disk_file.open()
                 except DiskFileNotExist:
-                    return HTTPNotFound(request=req)
+                    raise HTTPNotFound(request=req)
             elif access_type == 'PUT':
                 try:
                     local_object.disk_file.new_timestamp = \
                         req.headers.get('x-timestamp')
                     float(local_object.disk_file.new_timestamp)
                 except (KeyError, ValueError, TypeError):
-                    return HTTPBadRequest(
+                    raise HTTPBadRequest(
                         body='Locally writable object '
                              'specified but no x-timestamp '
                              'in request')
         elif container:
+            # For containers, only GET and POST requests are supported.
+            # GET is used in the case where a ZeroVM application attaches to a
+            # container (read-only).
+            # POSTs used for bi-directional communication between proxy and
+            # object nodes.
             if access_type == 'GET':
                 local_object.broker = \
                     self._diskfile_mgr.get_container_broker(
                         device, partition,
                         account, container)
                 if local_object.broker.is_deleted():
-                    return HTTPNotFound(headers=nexe_headers,
-                                        request=req)
+                    raise HTTPNotFound(headers=nexe_headers,
+                                       request=req)
             else:
-                return HTTPBadRequest(
-                    body='Containers should be read-only',
+                raise HTTPMethodNotAllowed(
+                    body=("'%s' requests on containers are not supported." %
+                          access_type),
                     headers=nexe_headers)
+
         pool = req.headers.get('x-zerovm-pool', 'default').lower()
         thrdpool = self.zerovm_thread_pools.get(pool, None)
         if not thrdpool:
-            return HTTPBadRequest(body='Cannot find pool %s' % pool,
-                                  request=req, content_type='text/plain',
-                                  headers=nexe_headers)
+            raise HTTPBadRequest(body='Cannot find pool %s' % pool,
+                                 request=req, content_type='text/plain',
+                                 headers=nexe_headers)
         if not thrdpool.can_spawn(job_id):
             # if can_spawn() returned True it actually means
             # that spawn() will always succeed
             # unless something really bad happened
-            return HTTPServiceUnavailable(body='Slot not available',
-                                          request=req,
-                                          content_type='text/plain',
-                                          headers=nexe_headers)
+            raise HTTPServiceUnavailable(body='Slot not available',
+                                         request=req,
+                                         content_type='text/plain',
+                                         headers=nexe_headers)
         zerovm_valid = False
         if config_true_value(req.headers.get('x-zerovm-valid', 'false')):
             zerovm_valid = True
@@ -705,14 +812,14 @@ class ObjectQueryMiddleware(object):
             for chunk in read_iter:
                 perf = "%s %.3f" % (perf, time.time() - start)
                 if req.body_file.position > rbytes:
-                    return HTTPRequestEntityTooLarge(
+                    raise HTTPRequestEntityTooLarge(
                         body='RPC request too large',
                         request=req,
                         content_type='text/plain',
                         headers=nexe_headers)
                 if time.time() > upload_expiration:
-                    return HTTPRequestTimeout(request=req,
-                                              headers=nexe_headers)
+                    raise HTTPRequestTimeout(request=req,
+                                             headers=nexe_headers)
                 untar_stream.update_buffer(chunk)
                 info = untar_stream.get_next_tarinfo()
                 while info:
@@ -725,52 +832,57 @@ class ObjectQueryMiddleware(object):
                                 untar_stream.untar_file_iter(),
                                 self.network_chunk_size)
                         channels[fname] = os.path.join(zerovm_tmp, fname)
-                        fp = open(channels[fname], 'ab')
-                        untar_stream.to_write = info.size
-                        untar_stream.offset_data = info.offset_data
-                        try:
-                            for data in file_iter:
-                                fp.write(data)
-                                perf = "%s %s:%.3f" % (perf,
-                                                       info.name,
-                                                       time.time() - start)
-                        except zlib.error:
-                            return HTTPUnprocessableEntity(
-                                request=req,
-                                body='Failed to inflate gzipped image',
-                                headers=nexe_headers)
-                        fp.close()
+                        with open(channels[fname], 'ab') as fp:
+                            untar_stream.to_write = info.size
+                            untar_stream.offset_data = info.offset_data
+                            try:
+                                for data in file_iter:
+                                    fp.write(data)
+                                    perf = "%s %s:%.3f" % (perf,
+                                                           info.name,
+                                                           time.time() - start)
+                            except zlib.error:
+                                raise HTTPUnprocessableEntity(
+                                    request=req,
+                                    body='Failed to inflate gzipped image',
+                                    headers=nexe_headers)
                     info = untar_stream.get_next_tarinfo()
-            if 'content-length' in req.headers \
-                    and int(req.content_length) != req.body_file.position:
-                self.logger.warning('Client disconnect %s != %d : %s'
-                                    % (req.headers['content-length'],
-                                       req.body_file.position,
-                                       str(req.headers)))
-                return HTTPClientDisconnect(request=req,
-                                            headers=nexe_headers)
+            # Check if the all data was read from the request body. If the
+            # length of the data is less than the `Content-Length`, the client
+            # must have disconnected prematurely.
+            if 'content-length' in req.headers:
+                if req.body_file.position < int(req.content_length):
+                    self.logger.warning('Client disconnect %s != %d : %s'
+                                        % (req.headers['content-length'],
+                                           req.body_file.position,
+                                           str(req.headers)))
+                    raise HTTPClientDisconnect(request=req,
+                                               headers=nexe_headers)
+                elif req.body_file.position > int(req.content_length):
+                    raise HTTPBadRequest(
+                        request=req,
+                        body=("Actual content length is greater than the "
+                              "'Content-Length' header"))
             perf = "%s %.3f" % (perf, time.time() - start)
             if self.zerovm_perf:
                 self.logger.info("PERF UNTAR: %s" % perf)
             if 'sysmap' in channels:
                 config_file = channels.pop('sysmap')
-                fp = open(config_file, 'rb')
-                try:
-                    config = json.load(fp)
-                except Exception:
-                    fp.close()
-                    return HTTPBadRequest(request=req,
-                                          body='Cannot parse system map')
-                fp.close()
+                with open(config_file, 'rb') as fp:
+                    try:
+                        config = json.load(fp)
+                    except ValueError:
+                        raise HTTPBadRequest(request=req,
+                                             body='Cannot parse system map')
             else:
-                return HTTPBadRequest(request=req,
-                                      body='No system map found in request')
+                raise HTTPBadRequest(request=req,
+                                     body='No system map found in request')
 
             nexe_headers['x-nexe-system'] = config.get('name', '')
             # print json.dumps(config, indent=2)
             zerovm_nexe = None
             exe_path = parse_location(config['exe'])
-            if is_image_path(exe_path):
+            if isinstance(exe_path, ImagePath):
                 if exe_path.image in channels:
                     self._extract_boot_file(channels,
                                             exe_path.path,
@@ -787,8 +899,8 @@ class ObjectQueryMiddleware(object):
             if 'boot' in channels:
                 zerovm_nexe = channels.pop('boot')
             elif not daemon_sock:
-                return HTTPBadRequest(request=req,
-                                      body='No executable found in request')
+                raise HTTPBadRequest(request=req,
+                                     body='No executable found in request')
             is_master = True
             replicate = config.get('replicate', 1)
             if replicate > 1 \
@@ -806,7 +918,7 @@ class ObjectQueryMiddleware(object):
                                 meta = local_object.disk_file.get_metadata()
                                 input_file_size = int(meta['Content-Length'])
                                 if input_file_size > rbytes:
-                                    return HTTPRequestEntityTooLarge(
+                                    raise HTTPRequestEntityTooLarge(
                                         body='Data object too large',
                                         request=req,
                                         content_type='text/plain',
@@ -826,7 +938,7 @@ class ObjectQueryMiddleware(object):
                                     self.os_interface.path.getsize(
                                         local_object.broker.db_file)
                                 if input_file_size > rbytes:
-                                    return HTTPRequestEntityTooLarge(
+                                    raise HTTPRequestEntityTooLarge(
                                         body='Data object too large',
                                         request=req,
                                         headers=nexe_headers)
@@ -840,14 +952,18 @@ class ObjectQueryMiddleware(object):
                         local_object.channel = ch
                 if self.parser.is_sysimage_device(ch['device']):
                     ch['lpath'] = self.parser.get_sysimage(ch['device'])
+                elif not ch['path'] and not ch.get('lpath') \
+                        and ch['device'] == 'stdin':
+                    ch['lpath'] = '/dev/null'
                 elif ch['access'] & (ACCESS_READABLE | ACCESS_CDR):
                     if not ch.get('lpath'):
-                        if not chan_path or is_image_path(chan_path)\
-                                or is_swift_path(chan_path):
-                            return HTTPBadRequest(request=req,
-                                                  body='Could not resolve '
-                                                       'channel path: %s'
-                                                       % ch['path'])
+                        if not chan_path or isinstance(chan_path, ImagePath) \
+                                or isinstance(chan_path, SwiftPath):
+                            raise HTTPBadRequest(
+                                request=req,
+                                body='Could not resolve channel path "%s" for '
+                                     'device: %s' % (ch['path'] or '',
+                                                     ch['device']))
                 elif ch['access'] & ACCESS_WRITABLE:
                     writable_tmpdir = self.get_writable_tmpdir(device)
                     (output_fd, output_fn) = mkstemp(dir=writable_tmpdir)
@@ -861,13 +977,15 @@ class ObjectQueryMiddleware(object):
                             response_channels.insert(0, ch)
                 elif ch['access'] & ACCESS_NETWORK:
                     ch['lpath'] = chan_path.path
-
+            config['colocated'] = colocated
+            timeout = int(req.headers.get(
+                'x-zerovm-timeout',
+                self.parser.parser_config['manifest']['Timeout']))
             with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
                                       zerovm_inputmnfst_fn):
                 (output_fd, nvram_file) = mkstemp()
                 os.close(output_fd)
                 start = time.time()
-                daemon_status = None
                 if daemon_sock:
                     zerovm_inputmnfst = \
                         self.parser.prepare_for_forked(config, nvram_file,
@@ -879,20 +997,20 @@ class ObjectQueryMiddleware(object):
                     try:
                         sock.connect(daemon_sock)
                         thrd = thrdpool.spawn(job_id, self.send_to_socket,
-                                              sock, zerovm_inputmnfst)
+                                              sock, zerovm_inputmnfst, timeout)
                     except IOError:
                         self._cleanup_daemon(daemon_sock)
                         sysimage_path = \
                             self.parser.get_sysimage(exe_path.image)
                         if not sysimage_path:
-                            return HTTPInternalServerError(
+                            raise HTTPInternalServerError(
                                 body='System image does not exist: %s'
                                      % exe_path.image)
                         if not self._extract_boot_file(channels,
                                                        exe_path.path,
                                                        sysimage_path,
                                                        zerovm_tmp):
-                            return HTTPInternalServerError(
+                            raise HTTPInternalServerError(
                                 body='Cannot find daemon nexe '
                                      'in system image %s'
                                      % sysimage_path)
@@ -910,12 +1028,13 @@ class ObjectQueryMiddleware(object):
                             zerovm_inputmnfst_fd,
                             zerovm_inputmnfst_fn,
                             zerovm_valid, thrdpool,
-                            job_id)
+                            job_id,
+                            timeout)
                         if thrd is None:
                             # something strange happened, let's log it
                             self.logger.warning('Slot not available after '
                                                 'can_spawn() succeeded')
-                            return HTTPServiceUnavailable(
+                            raise HTTPServiceUnavailable(
                                 body='Slot not available',
                                 request=req,
                                 content_type='text/plain',
@@ -935,18 +1054,17 @@ class ObjectQueryMiddleware(object):
                         if len(report) < REPORT_LENGTH or zerovm_retcode > 1:
                             resp = self._create_exec_error(nexe_headers,
                                                            zerovm_retcode,
-                                                           zerovm_stdout)
-                            return req.get_response(resp)
+                                                           zerovm_stdout,
+                                                           response_channels)
+                            return resp
                         else:
                             try:
-                                daemon_status = int(report[REPORT_DAEMON])
                                 _parse_zerovm_report(nexe_headers, report)
                             except Exception:
-                                resp = HTTPInternalServerError(
+                                raise HTTPInternalServerError(
                                     body=zerovm_stdout)
-                                return req.get_response(resp)
-                        if daemon_status != 1:
-                            return HTTPInternalServerError(body=zerovm_stdout)
+                        if 'x-zerovm-daemon' not in nexe_headers:
+                            raise HTTPInternalServerError(body=zerovm_stdout)
                         zerovm_inputmnfst = \
                             self.parser.prepare_for_forked(
                                 config, nvram_file,
@@ -959,9 +1077,9 @@ class ObjectQueryMiddleware(object):
                             thrd = thrdpool.spawn(job_id,
                                                   self.send_to_socket,
                                                   sock,
-                                                  zerovm_inputmnfst)
+                                                  zerovm_inputmnfst, timeout)
                         except IOError:
-                            return HTTPInternalServerError(
+                            raise HTTPInternalServerError(
                                 body='Cannot connect to daemon '
                                      'even after daemon restart: '
                                      'socket %s' % daemon_sock,
@@ -978,15 +1096,16 @@ class ObjectQueryMiddleware(object):
                                                       zerovm_inputmnfst_fd,
                                                       zerovm_inputmnfst_fn,
                                                       zerovm_valid, thrdpool,
-                                                      job_id)
+                                                      job_id,
+                                                      timeout)
                 if thrd is None:
                     # something strange happened, let's log it
                     self.logger.warning('Slot not available after '
                                         'can_spawn() succeeded')
-                    return HTTPServiceUnavailable(body='Slot not available',
-                                                  request=req,
-                                                  content_type='text/plain',
-                                                  headers=nexe_headers)
+                    raise HTTPServiceUnavailable(body='Slot not available',
+                                                 request=req,
+                                                 content_type='text/plain',
+                                                 headers=nexe_headers)
                 (zerovm_retcode, zerovm_stdout, zerovm_stderr) = thrd.wait()
                 perf = "%.3f" % (time.time() - start)
                 if self.zerovm_perf:
@@ -1007,52 +1126,60 @@ class ObjectQueryMiddleware(object):
                 report = zerovm_stdout.split('\n', REPORT_LENGTH - 1)
                 if len(report) == REPORT_LENGTH:
                     try:
-                        if daemon_status != 1:
-                            daemon_status = int(report[REPORT_DAEMON])
                         _parse_zerovm_report(nexe_headers, report)
                     except ValueError:
                         resp = self._create_exec_error(nexe_headers,
                                                        zerovm_retcode,
-                                                       zerovm_stdout)
-                        _channel_cleanup(response_channels)
-                        return req.get_response(resp)
+                                                       zerovm_stdout,
+                                                       response_channels)
+                        return resp
                 if zerovm_retcode > 1 or len(report) < REPORT_LENGTH:
                     resp = self._create_exec_error(nexe_headers,
                                                    zerovm_retcode,
-                                                   zerovm_stdout)
-                    _channel_cleanup(response_channels)
-                    return req.get_response(resp)
+                                                   zerovm_stdout,
+                                                   response_channels)
+                    return resp
 
                 self.logger.info('Zerovm CDR: %s'
                                  % nexe_headers['x-nexe-cdr-line'])
 
                 response = Response(request=req)
+                if zerovm_retcode > 0:
+                    response.headers['x-nexe-error'] = 'bad return code'
                 update_headers(response, nexe_headers)
                 response.headers['X-Timestamp'] =\
                     normalize_timestamp(time.time())
                 response.headers['x-nexe-system'] = \
                     nexe_headers['x-nexe-system']
                 response.content_type = 'application/x-gtar'
-                if daemon_status == 1:
-                    response.headers['x-zerovm-daemon'] = \
-                        req.headers.get('x-zerovm-daemon', None)
-                tar_stream = TarStream()
+                # we return co-location information to user
+                # but we need to avoid revealing any internal network
+                # information, therefore we hmac.sha1(ip:port),
+                # using random salt supplied by proxy
+                if colocated:
+                    salt, addr = colocated.split(':', 1)
+                    response.headers['x-nexe-colocated'] = \
+                        hmac.new(salt, addr, sha1).hexdigest()
+                tar_stream = TarStream(format=PAX_FORMAT, encoding='utf-8',
+                                       chunk_size=self.network_chunk_size)
                 resp_size = 0
                 immediate_responses = []
-                send_config = False
                 for ch in response_channels:
+                    headers = HeaderKeyDict()
                     if ch['content_type'].startswith('message/http'):
-                        self._read_cgi_response(ch, nph=True)
-                        send_config = True
+                        headers = self._read_cgi_response(ch, nph=True)
                     elif ch['content_type'].startswith('message/cgi'):
-                        self._read_cgi_response(ch, nph=False)
-                        send_config = True
+                        headers = self._read_cgi_response(ch, nph=False)
                     else:
                         ch['size'] = \
                             self.os_interface.path.getsize(ch['lpath'])
+                    if ch['size'] < ch['min_size']:
+                        continue
+                    headers = _set_pax_headers(headers, ch)
                     info = tar_stream.create_tarinfo(ftype=REGTYPE,
                                                      name=ch['device'],
-                                                     size=ch['size'])
+                                                     size=ch['size'],
+                                                     headers=headers)
                     tar_size = TarStream.get_archive_size(ch['size'])
                     resp_size += len(info) + tar_size
                     ch['info'] = info
@@ -1070,68 +1197,32 @@ class ObjectQueryMiddleware(object):
                             'message/cgi'):
                         self._read_cgi_response(
                             local_object.channel, nph=False)
-                    error = self._finalize_local_file(
-                        local_object.channel,
-                        local_object.disk_file,
-                        nexe_headers['x-nexe-etag'],
-                        account,
-                        container,
-                        obj,
-                        req,
-                        device)
-                    if error:
-                        return error
-                sysmap_info = ''
-                sysmap_dump = ''
-                if send_config:
-                    sysmap = config.copy()
-                    sysmap['channels'] = []
-                    for ch in config['channels']:
-                        ch = ch.copy()
-                        ch.pop('size', None)
-                        ch.pop('info', None)
-                        ch.pop('lpath', None)
-                        ch.pop('offset', None)
-                        sysmap['channels'].append(ch)
-                    sysmap_dump = json.dumps(sysmap)
-                    sysmap_info = \
-                        tar_stream.create_tarinfo(ftype=REGTYPE,
-                                                  name='sysmap',
-                                                  size=len(sysmap_dump))
-                    resp_size += len(sysmap_info) + \
-                        TarStream.get_archive_size(len(sysmap_dump))
+                    self._finalize_local_file(local_object.channel,
+                                              local_object.disk_file,
+                                              nexe_headers['x-nexe-etag'],
+                                              account, container, obj,
+                                              req,
+                                              device, policy_idx)
 
                 def resp_iter(channels, chunk_size):
-                    tstream = TarStream(chunk_size=chunk_size)
-                    if send_config:
-                        for chunk in tstream.serve_chunk(sysmap_info):
-                            yield chunk
-                        for chunk in tstream.serve_chunk(sysmap_dump):
-                            yield chunk
-                        blocks, remainder = divmod(len(sysmap_dump), BLOCKSIZE)
-                        if remainder > 0:
-                            nulls = NUL * (BLOCKSIZE - remainder)
-                            for chunk in tstream.serve_chunk(nulls):
-                                yield chunk
                     for ch in channels:
-                        fp = open(ch['lpath'], 'rb')
-                        if ch.get('offset', None):
-                            fp.seek(ch['offset'])
-                        reader = iter(lambda: fp.read(chunk_size), '')
-                        for chunk in tstream.serve_chunk(ch['info']):
-                            yield chunk
-                        for data in reader:
-                            for chunk in tstream.serve_chunk(data):
+                        with open(ch['lpath'], 'rb') as fp:
+                            if ch.get('offset', None):
+                                fp.seek(ch['offset'])
+                            reader = iter(lambda: fp.read(chunk_size), '')
+                            for chunk in tar_stream.serve_chunk(ch['info']):
                                 yield chunk
-                        fp.close()
+                            for data in reader:
+                                for chunk in tar_stream.serve_chunk(data):
+                                    yield chunk
                         os.unlink(ch['lpath'])
                         blocks, remainder = divmod(ch['size'], BLOCKSIZE)
                         if remainder > 0:
                             nulls = NUL * (BLOCKSIZE - remainder)
-                            for chunk in tstream.serve_chunk(nulls):
+                            for chunk in tar_stream.serve_chunk(nulls):
                                 yield chunk
-                    if tstream.data:
-                        yield tstream.data
+                    if tar_stream.data:
+                        yield tar_stream.data
 
                 response.app_iter = resp_iter(immediate_responses,
                                               self.network_chunk_size)
@@ -1139,6 +1230,7 @@ class ObjectQueryMiddleware(object):
                 return response
 
     def _read_cgi_response(self, ch, nph=True):
+        headers = HeaderKeyDict()
         if nph:
             fp = open(ch['lpath'], 'rb')
         else:
@@ -1152,8 +1244,9 @@ class ObjectQueryMiddleware(object):
             ch['size'] = self.os_interface.path.getsize(ch['lpath'])
             fp.close()
             self.logger.warning('Invalid message/http')
-            return
-        headers = dict(resp.getheaders())
+            return headers
+        headers['status'] = '%d %s' % (resp.status, resp.reason)
+        headers.update(resp.getheaders())
         ch['offset'] = fp.tell()
         metadata = {}
         if 'content-type' in headers:
@@ -1166,6 +1259,7 @@ class ObjectQueryMiddleware(object):
         ch['meta'] = metadata
         ch['size'] = self.os_interface.path.getsize(ch['lpath']) - ch['offset']
         fp.close()
+        return headers
 
     def __call__(self, env, start_response):
         """WSGI Application entry point for the Swift Object Server."""
@@ -1178,6 +1272,8 @@ class ObjectQueryMiddleware(object):
             try:
                 if 'x-zerovm-execute' in req.headers and req.method == 'POST':
                     res = self.zerovm_query(req)
+                    self.logger.debug("zerovm_query: %(status)s",
+                                      dict(status=res.status))
                 elif req.method in ['PUT', 'POST'] \
                         and ('x-zerovm-validate' in req.headers
                              or req.headers.get('content-type', '')
@@ -1216,6 +1312,11 @@ class ObjectQueryMiddleware(object):
                     return self.app(env, validate_resp)
                 else:
                     return self.app(env, start_response)
+            except HTTPException as error_response:
+                res = error_response
+                self.logger.debug("zerovm_query: %(status)s - %(body)s",
+                                  dict(status=res.status,
+                                       body=res.body))
             except (Exception, Timeout):
                 self.logger.exception('ERROR __call__ error with %(method)s'
                                       ' %(path)s ',
@@ -1227,29 +1328,25 @@ class ObjectQueryMiddleware(object):
                                              % (trans_time,
                                                 res.headers['x-nexe-cdr-line'])
         if self.log_requests:
-            log_line = '%s - - [%s] "%s %s" %s %s "%s" "%s" "%s" %.4f' % (
-                req.remote_addr,
-                time.strftime('%d/%b/%Y:%H:%M:%S +0000', time.gmtime()),
-                req.method, req.path, res.status.split()[0],
-                res.content_length or '-', req.referer or '-',
-                req.headers.get('x-trans-id', '-'),
-                req.user_agent or '-',
-                trans_time)
-
+            additional_info = 'node: %s, status: %s, cdr: %s' % \
+                              (res.headers.get('x-nexe-system', '-'),
+                               res.headers.get('x-nexe-status', '-'),
+                               res.headers.get('x-nexe-cdr-line', '-'))
+            log_line = get_log_line(req, res, trans_time, additional_info)
             self.logger.info(log_line)
-
         return res(env, start_response)
 
     def validate(self, req):
         try:
-            (device, partition, account, container, obj) =\
-                split_path(unquote(req.path), 5, 5, True)
+            device, partition, account, container, obj, policy_idx = \
+                get_name_and_placement(req, 5, 5, True)
         except ValueError:
             return False
         try:
             try:
                 disk_file = self.get_disk_file(device, partition,
-                                               account, container, obj)
+                                               account, container, obj,
+                                               policy_idx)
             except DiskFileDeviceUnavailable:
                 return HTTPInsufficientStorage(drive=device, request=req)
         except DiskFileDeviceUnavailable:
@@ -1266,6 +1363,7 @@ class ObjectQueryMiddleware(object):
                 )
                 with tmpdir.mkstemp() as (zerovm_inputmnfst_fd,
                                           zerovm_inputmnfst_fn):
+                    timeout = self.parser_config['manifest']['Timeout']
                     zerovm_inputmnfst = (
                         'Version=%s\n'
                         'Program=%s\n'
@@ -1277,7 +1375,7 @@ class ObjectQueryMiddleware(object):
                         % (
                             self.parser_config['manifest']['Version'],
                             disk_file.data_file,
-                            self.parser_config['manifest']['Timeout'],
+                            timeout,
                             self.parser_config['manifest']['Memory']
                         ))
                     while zerovm_inputmnfst:
@@ -1288,6 +1386,7 @@ class ObjectQueryMiddleware(object):
                     thrdpool = self.zerovm_thread_pools['default']
                     thrd = thrdpool.force_spawn(self.execute_zerovm,
                                                 zerovm_inputmnfst_fn,
+                                                timeout,
                                                 ['-F'])
                     (zerovm_retcode, zerovm_stdout, zerovm_stderr) = \
                         thrd.wait()
@@ -1310,13 +1409,14 @@ class ObjectQueryMiddleware(object):
 
     def is_validated(self, req):
         try:
-            (device, partition, account, container, obj) = \
-                split_path(unquote(req.path), 5, 5, True)
+            device, partition, account, container, obj, policy_idx = \
+                get_name_and_placement(req, 5, 5, True)
         except ValueError:
             return False
         try:
             disk_file = self.get_disk_file(device, partition,
-                                           account, container, obj)
+                                           account, container, obj,
+                                           policy_idx)
         except DiskFileDeviceUnavailable:
                 return HTTPInsufficientStorage(drive=device, request=req)
         with disk_file.open():
@@ -1331,7 +1431,8 @@ class ObjectQueryMiddleware(object):
                 return False
 
     def _finalize_local_file(self, local_object, disk_file, nexe_etag,
-                             account, container, obj, request, device):
+                             account, container, obj, request, device,
+                             policy_idx):
         data = nexe_etag.split(' ')
         # data can contain memory etag, for snapshot usage
         # let's just remember it here: mem_etag
@@ -1345,12 +1446,12 @@ class ObjectQueryMiddleware(object):
                 reported_etag = etag
                 break
         if not reported_etag:
-            return HTTPUnprocessableEntity(
+            raise HTTPUnprocessableEntity(
                 body='No etag found for resulting object '
                      'after writing channel %s data'
                      % disk_file.channel_device)
         if len(reported_etag) != MD5HASH_LENGTH:
-            return HTTPUnprocessableEntity(
+            raise HTTPUnprocessableEntity(
                 body='Bad etag for %s: %s'
                      % (disk_file.channel_device, reported_etag))
         try:
@@ -1392,7 +1493,7 @@ class ObjectQueryMiddleware(object):
                                   os.read(fd, self.disk_chunk_size), ''):
                     new_etag.update(chunk)
             except IOError:
-                return HTTPInternalServerError(
+                raise HTTPInternalServerError(
                     body='Cannot read resulting file for device %s'
                          % disk_file.channel_device)
             metadata['ETag'] = new_etag.hexdigest()
@@ -1417,7 +1518,7 @@ class ObjectQueryMiddleware(object):
                 'x-content-type': metadata['Content-Type'],
                 'x-timestamp': metadata['X-Timestamp'],
                 'x-etag': metadata['ETag']}),
-            device)
+            device, policy_idx)
 
     def _cleanup_daemon(self, daemon_sock):
         for pid in self._get_daemon_pid(daemon_sock):
@@ -1461,6 +1562,9 @@ def _parse_zerovm_report(nexe_headers, report):
     nexe_headers['x-nexe-cdr-line'] = report[REPORT_CDR]
     nexe_headers['x-nexe-status'] = \
         report[REPORT_STATUS].replace('\n', ' ').rstrip()
+    daemon_status = int(report[REPORT_DAEMON])
+    if daemon_status > 0:
+        nexe_headers['x-zerovm-daemon'] = daemon_status
 
 
 def _channel_cleanup(response_channels):
@@ -1469,6 +1573,16 @@ def _channel_cleanup(response_channels):
             os.unlink(ch['lpath'])
         except OSError:
             pass
+
+
+def _set_pax_headers(headers, channel):
+    ch_headers = HeaderKeyDict({
+        'content-length': channel['size'],
+        'content-type': channel['content_type'],
+        'x-zerovm-device': channel['device']
+    })
+    ch_headers.update(headers)
+    return ch_headers
 
 
 def filter_factory(global_conf, **local_conf):
