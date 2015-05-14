@@ -2390,7 +2390,7 @@ class ClusterController(ObjectController):
 
     def print_node_info(self, node):
         for key, value in node.iteritems():
-            # print key, value
+            # print key, value - 
             self.app.logger.info("key:{} value:{}".format(key, value))
 
 
