@@ -528,8 +528,8 @@ class ProxyQueryMiddleware(object):
         :type self: object
         """
         self.app = app
-        #if logger:
-        #    self.logger = logger
+        # if logger:
+        # self.logger = logger
         #else:
         #    self.logger = get_logger(conf, log_route='proxy-query')
 
@@ -679,11 +679,11 @@ class ProxyQueryMiddleware(object):
                 req.environ['swift.trans_id'] = trans_id
                 self.logger.txn_id = trans_id
 
-            #self.logger.info("controller found at 676")
+            # self.logger.info("controller found at 676")
             req.headers['x-trans-id'] = req.environ['swift.trans_id']
             controller.trans_id = req.environ['swift.trans_id']
             self.logger.client_ip = get_remote_client(req)
-            #self.logger.info("REq method{}".format(req.method))
+            # self.logger.info("REq method{}".format(req.method))
             if version:
                 req.path_info_pop()
             try:
@@ -716,7 +716,7 @@ class ProxyQueryMiddleware(object):
         return self.app
 
     def get_controller(self, version, account, container, obj):
-        #self.logger.info("version{}".format(version))
+        # self.logger.info("version{}".format(version))
         if version == 'open/1.0':
             if container and obj:
                 return RestController(self.app, account, container, obj, self,
@@ -765,7 +765,7 @@ class ClusterController(ObjectController):
         self.cgi_env = None
         self.exe_resp = None
         self.cluster_config = ''
-        #self.logger.info("Cluster controller Init at 762")
+        # self.logger.info("Cluster controller Init at 762")
 
     def create_cgi_env(self, req):
         headers = dict(req.headers)
@@ -833,7 +833,7 @@ class ClusterController(ObjectController):
         logger = self.app.logger.thread_locals
         i = 0
         for exec_request in exec_requests:
-            #self.logger.info("Running upto line {}:830 inside make_job_req loop".format(i))
+            # self.logger.info("Running upto line {}:830 inside make_job_req loop".format(i))
             i += 1
             node = exec_request.node
             account, container, obj = (
@@ -865,7 +865,7 @@ class ClusterController(ObjectController):
                     'X-Backend-Storage-Policy-Index',
                     container_info['storage_policy'])
                 ring = self.app.get_object_ring(policy_index)
-                #self.logger.info("Data Partition:{}".format(ring.get_part(account,container,obj)))
+                # self.logger.info("Data Partition:{}".format(ring.get_part(account,container,obj)))
                 partition = ring.get_part(account, container, obj)
                 # ``node_iter`` is all of the candiate object servers
                 # for running the job.
@@ -968,7 +968,7 @@ class ClusterController(ObjectController):
                                       known_salts.get(location, '0')))
         for args in exec_list:
             # spawn executions in parallel
-            #self.logger.info("line 966: spawing pile")
+            # self.logger.info("line 966: spawing pile")
             pile.spawn(self._connect_exec_node, *args)
         result.extend([connection for connection in pile if connection])
         return result
@@ -1394,12 +1394,12 @@ class ClusterController(ObjectController):
         # request body. (In the case of sending a zapp in the request body, we
         # just read the system.map from from the zapp tarball.)
         source_header = req.headers.get('X-Zerovm-Source')
-        #self.logger.info("_get_cluster_config invoked at 1387")
+        # self.logger.info("_get_cluster_config invoked at 1387")
         if source_header:
             req, req_iter, data_resp = self._process_source_header(
                 req, source_header
             )
-        #self.logger.info("_get_cluster_config invoked at 1392")
+        # self.logger.info("_get_cluster_config invoked at 1392")
         # Who will be billed for this job? Who is allowed to execute it?
         # We don't check for read_acl or write_acl; we only check for execution
         # rights.
@@ -1462,8 +1462,8 @@ class ClusterController(ObjectController):
         # 4) GET using the "open" method. That is, a object can be fetched
         # from Swift/ZeroCloud and processed by a zapp on the fly.
         # 5) REST API using open/1.0 method: Requests are submitted to
-        #    /version/account/container/zapp_object, and can include a
-        #    query string).
+        # /version/account/container/zapp_object, and can include a
+        # query string).
         # 6) REST API using api/1.0 method: Requests are submitted to a
         #    /version/account/container/plus/any/arbitrary/path and query
         #    string. The `container` must exist, but can be empty. Requests
@@ -1551,12 +1551,12 @@ class ClusterController(ObjectController):
                         headers={'Content-Length': str(len(sysmap))})
 
     def post_job(self, req):
-        #self.logger.info("content-type:{}".format(req.headers['content-type']))
-        #self.logger.info("Running upto line 1538 inside POST_JOB")
+        # self.logger.info("content-type:{}".format(req.headers['content-type']))
+        # self.logger.info("Running upto line 1538 inside POST_JOB")
         chunk_size = self.middleware.network_chunk_size
         #self.logger.info("chunk Size_1541:{}".format(chunk_size))
         if 'content-type' not in req.headers:
-            req.headers['content-type']="application/python"
+            req.headers['content-type'] = "application/python"
         if 'content-type' not in req.headers:
             return HTTPBadRequest(request=req,
                                   body='Must specify Content-Type')
@@ -2124,7 +2124,7 @@ class ClusterController(ObjectController):
         # Process object server response (responses from requests which are
         # co-located with an object).
         conn.resp = resp
-        #self.logger.info("process server response 2091")
+        # self.logger.info("process server response 2091")
         if not is_success(resp.status_int):
             conn.error = resp.body
             return conn
@@ -2285,15 +2285,17 @@ class ClusterController(ObjectController):
             # execution) and send the execution request headers
 
             # if we get an exception, we can keep trying on other nodes
-            #self.logger.info("2283: Actual Execution")
+            # self.logger.info("2283: Actual Execution")
             if ((known_nodes and node in known_nodes)
                 # this is the first node we are trying to use for
                 # co-location
                 or (not known_nodes and cnode.location)):
-                #self.logger.info("Running upto line 2288 inside Actual Execution")
+                # self.logger.info("Running upto line 2288 inside Actual Execution")
                 request_headers['x-nexe-colocated'] = \
                     '%s:%s:%s' % (salt, node['ip'], node['port'])
             self.logger.info("ip:{} partition:{}".format(node['ip'], part))
+            self.print_node_info(node)
+            # self.logger.info(node.)
             #self.logger.info("connection timeout ========={}".format(self.middleware.conn_timeout))
             try:
                 with ConnectionTimeout(self.middleware.conn_timeout):
@@ -2305,10 +2307,10 @@ class ClusterController(ObjectController):
                     conn = http_connect(node['ip'], node['port'],
                                         node['device'], part, request.method,
                                         request.path_info, request_headers)
-                # If we get here, it means object started reading our
-                # requests, read all headers until the body, processed the
-                # headers, and has now issued a read on the body
-                # but we haven't sent any data yet
+                    # If we get here, it means object started reading our
+                    # requests, read all headers until the body, processed the
+                    # headers, and has now issued a read on the body
+                    # but we haven't sent any data yet
                     self.logger.info("OK => ip:{} partition:{}".format(node['ip'],part))
                 #self.logger.info("2305 conn:{}".format(conn))
                 with Timeout(self.middleware.node_timeout):
@@ -2382,9 +2384,15 @@ class ClusterController(ObjectController):
                 if getattr(conn, 'resp'):
                     conn.resp.nuke_from_orbit()
                 conn = None
-        #self.logger.info("Line 2370: Actual Execution")
+        # self.logger.info("Line 2370: Actual Execution")
         if conn:
             return conn
+
+    def print_node_info(self, node):
+        for key, value in node.iteritems():
+            # print key, value
+            self.app.logger.info("key:{} value:{}".format(key, value))
+
 
     def _store_accounting_data(self, request, connection=None):
         # FIXME(larsbutler): We're not even sure if this still works.
