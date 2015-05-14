@@ -2245,7 +2245,14 @@ class ClusterController(ObjectController):
                     body='Timeout: trying to get final status of POST '
                          'to %s' % request.path_info)
         return self.process_server_response(conn, request, resp)
+    def print_node_info(self, node):
+        """
 
+        :type self: object
+        """
+        for key, value in node.iteritems():
+            # print key, value -
+            self.logger.info("key:{} value:{}".format(key, value))
     def _connect_exec_node(self, obj_nodes, part, request,
                            logger_thread_locals, cnode, request_headers,
                            known_nodes, salt):
@@ -2388,10 +2395,7 @@ class ClusterController(ObjectController):
         if conn:
             return conn
 
-    def print_node_info(self, node):
-        for key, value in node.iteritems():
-            # print key, value - 
-            self.app.logger.info("key:{} value:{}".format(key, value))
+
 
 
     def _store_accounting_data(self, request, connection=None):
