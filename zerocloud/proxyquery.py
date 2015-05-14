@@ -2247,7 +2247,7 @@ class ClusterController(ObjectController):
         return self.process_server_response(conn, request, resp)
 
     def print_node_info(self, node, part_no):
-        self.logger.info("id:{},ip:{},replication_ip:{},partition:{}")
+        self.logger.info("id:{},ip:{},replication_ip:{},partition:{}".format(node['id'], node['ip'], node['replication_ip'], part_no))
         # for key, value in node.iteritems():
         #     # print key, value -
         #     self.logger.info("key:{} value:{}".format(key, value))
