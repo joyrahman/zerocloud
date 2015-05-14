@@ -869,9 +869,13 @@ class ClusterController(ObjectController):
                 partition = ring.get_part(account, container, obj)
                 # ``node_iter`` is all of the candiate object servers
                 # for running the job.
+
                 node_iter = GreenthreadSafeIterator(
                     self.iter_nodes_local_first(ring,
                                                 partition))
+
+                for item in node_iter:
+                    self.logger.info("878: node_info{}".format(item))
                 # If the storage-policy-index was not set, we set it.
                 # Why does swift need this to be set?
                 # Because the object servers don't know about policies.
@@ -2316,7 +2320,7 @@ class ClusterController(ObjectController):
                     # requests, read all headers until the body, processed the
                     # headers, and has now issued a read on the body
                     # but we haven't sent any data yet
-                    self.logger.info("OK => ip:{} partition:{}".format(node['ip'],part))
+                    #self.logger.info("OK => ip:{} partition:{}".format(node['ip'],part))
                     self.print_node_info(node, part)
                 #self.logger.info("2305 conn:{}".format(conn))
                 with Timeout(self.middleware.node_timeout):

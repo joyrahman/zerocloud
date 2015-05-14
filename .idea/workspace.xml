@@ -3,6 +3,7 @@
   <component name="ChangeListManager">
     <list default="true" id="11689e28-3524-4baf-a507-2d6e3670d47f" name="Default" comment="">
       <change type="MODIFICATION" beforePath="$PROJECT_DIR$/zerocloud/proxyquery.py" afterPath="$PROJECT_DIR$/zerocloud/proxyquery.py" />
+      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/workspace.xml" afterPath="$PROJECT_DIR$/.idea/workspace.xml" />
     </list>
     <ignored path="zerocloud.iws" />
     <ignored path=".idea/workspace.xml" />
@@ -40,12 +41,11 @@
       <file leaf-file-name="proxyquery.py" pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/zerocloud/proxyquery.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state vertical-scroll-proportion="0.7352587" vertical-offset="43235" max-vertical-offset="57772">
-              <caret line="2260" column="17" selection-start-line="2260" selection-start-column="17" selection-end-line="2260" selection-end-column="17" />
+            <state vertical-scroll-proportion="0.66168225" vertical-offset="18940" max-vertical-offset="61336">
+              <caret line="877" column="69" selection-start-line="877" selection-start-column="69" selection-end-line="877" selection-end-column="69" />
               <folding>
                 <element signature="e#0#25#0" expanded="true" />
-                <element signature="e#34423#42681#0" expanded="false" />
-                <element signature="e#43105#48837#0" expanded="false" />
+                <element signature="e#43216#48948#0" expanded="false" />
               </folding>
             </state>
           </provider>
@@ -100,7 +100,7 @@
     </leaf>
   </component>
   <component name="Git.Settings">
-    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/zerocloud" />
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="IdeDocumentHistory">
     <option name="CHANGED_PATHS">
@@ -114,8 +114,8 @@
     <detection-done>true</detection-done>
   </component>
   <component name="ProjectFrameBounds">
-    <option name="x" value="-256" />
-    <option name="y" value="27" />
+    <option name="x" value="10" />
+    <option name="y" value="23" />
     <option name="width" value="1920" />
     <option name="height" value="991" />
   </component>
@@ -181,7 +181,7 @@
   </component>
   <component name="PropertiesComponent">
     <property name="WebServerToolWindowFactoryState" value="false" />
-    <property name="options.lastSelected" value="preferences.sourceCode.Python" />
+    <property name="options.lastSelected" value="project.propVCSSupport.Mappings" />
     <property name="options.splitter.main.proportions" value="0.3" />
     <property name="options.splitter.details.proportions" value="0.2" />
     <property name="last_opened_file_path" value="$PROJECT_DIR$/zerocloud" />
@@ -447,12 +447,12 @@
     </todo-panel>
   </component>
   <component name="ToolWindowManager">
-    <frame x="-256" y="27" width="1920" height="991" extended-state="0" />
+    <frame x="10" y="23" width="1920" height="991" extended-state="0" />
     <editor active="true" />
     <layout>
       <window_info id="Changes" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
       <window_info id="Terminal" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
-      <window_info id="Find" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" weight="0.33" sideWeight="0.5" order="1" side_tool="false" content_ui="tabs" />
+      <window_info id="Find" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="true" weight="0.32925472" sideWeight="0.5" order="1" side_tool="false" content_ui="tabs" />
       <window_info id="Database" active="false" anchor="right" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" weight="0.33" sideWeight="0.5" order="3" side_tool="false" content_ui="tabs" />
       <window_info id="Debug" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" weight="0.4" sideWeight="0.5" order="3" side_tool="false" content_ui="tabs" />
       <window_info id="Event Log" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" weight="0.33" sideWeight="0.5" order="7" side_tool="true" content_ui="tabs" />
@@ -512,8 +512,7 @@
           <caret line="537" column="43" selection-start-line="537" selection-start-column="43" selection-end-line="537" selection-end-column="43" />
           <folding>
             <element signature="e#0#25#0" expanded="true" />
-            <element signature="e#34423#42681#0" expanded="false" />
-            <element signature="e#43105#48837#0" expanded="false" />
+            <element signature="e#43216#48948#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -602,12 +601,11 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/zerocloud/proxyquery.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state vertical-scroll-proportion="0.7352587" vertical-offset="43235" max-vertical-offset="57772">
-          <caret line="2260" column="17" selection-start-line="2260" selection-start-column="17" selection-end-line="2260" selection-end-column="17" />
+        <state vertical-scroll-proportion="0.66168225" vertical-offset="18940" max-vertical-offset="61336">
+          <caret line="877" column="69" selection-start-line="877" selection-start-column="69" selection-end-line="877" selection-end-column="69" />
           <folding>
             <element signature="e#0#25#0" expanded="true" />
-            <element signature="e#34423#42681#0" expanded="false" />
-            <element signature="e#43105#48837#0" expanded="false" />
+            <element signature="e#43216#48948#0" expanded="false" />
           </folding>
         </state>
       </provider>
