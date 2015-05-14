@@ -2245,14 +2245,12 @@ class ClusterController(ObjectController):
                     body='Timeout: trying to get final status of POST '
                          'to %s' % request.path_info)
         return self.process_server_response(conn, request, resp)
-    def print_node_info(self, node):
-        """
 
-        :type self: object
-        """
-        for key, value in node.iteritems():
-            # print key, value -
-            self.logger.info("key:{} value:{}".format(key, value))
+    def print_node_info(self, node, part_no):
+        self.logger.info("id:{},ip:{},replication_ip:{},partition:{}")
+        # for key, value in node.iteritems():
+        #     # print key, value -
+        #     self.logger.info("key:{} value:{}".format(key, value))
     def _connect_exec_node(self, obj_nodes, part, request,
                            logger_thread_locals, cnode, request_headers,
                            known_nodes, salt):
@@ -2300,8 +2298,8 @@ class ClusterController(ObjectController):
                 # self.logger.info("Running upto line 2288 inside Actual Execution")
                 request_headers['x-nexe-colocated'] = \
                     '%s:%s:%s' % (salt, node['ip'], node['port'])
-            self.logger.info("ip:{} partition:{}".format(node['ip'], part))
-            self.print_node_info(node)
+            #self.logger.info("ip:{} partition:{}".format(node['ip'], part))
+
             # self.logger.info(node.)
             #self.logger.info("connection timeout ========={}".format(self.middleware.conn_timeout))
             try:
@@ -2319,6 +2317,7 @@ class ClusterController(ObjectController):
                     # headers, and has now issued a read on the body
                     # but we haven't sent any data yet
                     self.logger.info("OK => ip:{} partition:{}".format(node['ip'],part))
+                    self.print_node_info(node, part)
                 #self.logger.info("2305 conn:{}".format(conn))
                 with Timeout(self.middleware.node_timeout):
                     resp = conn.getexpect()
