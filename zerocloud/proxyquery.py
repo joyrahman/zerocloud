@@ -536,7 +536,7 @@ class ProxyQueryMiddleware(object):
         self.logger = logging.getLogger('zerovm-debug')
         self.logger.setLevel(logging.DEBUG)
         self.logger.setLevel(logging.DEBUG)
-        fh = logging.FileHandler('/home/cloudsys/zvm.log')
+        fh = logging.FileHandler('/home/joy/zvm.log')
         fh.setLevel(logging.DEBUG)
         # create console handler with a higher log level
         # create formatter and add it to the handlers
