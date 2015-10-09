@@ -2288,7 +2288,8 @@ class ClusterController(ObjectController):
         :param str salt:
             Generated unique ID for a given server.
         """
-        self.app.logger.thread_locals = logger_thread_locals
+        #commented by joy on oct9,2015 for test purpose
+        #self.app.logger.thread_locals = logger_thread_locals
         conn = None
         for node in chain(known_nodes, obj_nodes):
             # this loop is trying to connect to candidate object servers (for
