@@ -917,6 +917,8 @@ class ClusterController(ObjectController):
                                                   node.replicate,
                                                   container_partition,
                                                   container_nodes)
+
+            self.logger.info("Running upto line :921 inside make_job_req ")
             if node.skip_validation:
                 for hdr in exec_headers:
                     hdr['x-zerovm-valid'] = 'true'
