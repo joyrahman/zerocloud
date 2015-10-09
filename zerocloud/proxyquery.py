@@ -2333,18 +2333,18 @@ class ClusterController(ObjectController):
                 conn.nexe_headers = request.resp_headers
                 if resp.status == HTTP_CONTINUE:
                     conn.resp = None
-                    #self.logger.info("2314:HTTP_CONTINUE {}".format(resp))
+                    self.logger.info("2314:HTTP_CONTINUE {}".format(resp))
                     return conn
                 elif is_success(resp.status):
                     conn.resp = resp
-                    #self.logger.info("2319 on Exec")
+                    self.logger.info("2319 on Exec")
                     return conn
                 elif resp.status == HTTP_INSUFFICIENT_STORAGE:
                     # increase the error count for this node
                     # to optimize, the proxy server can use this count to limit
                     # the number of requests send to this particular object
                     # node.
-                    #self.logger.info("2326 on Exec")
+                    self.logger.info("2326 on Exec")
                     self.app.error_limit(node,
                                          'ERROR Insufficient Storage')
                     conn.error = 'Insufficient Storage'
@@ -2388,7 +2388,7 @@ class ClusterController(ObjectController):
                     # another replicate (could be a problem with threadpool,
                     # etc.)
             except Exception as exp:
-                #self.logger.info("Exception on line 2364{}".format(exp))
+                self.logger.info("Exception on line 2364{}".format(exp))
                 self.app.exception_occurred(node, 'Object',
                                             'Expect: 100-continue on %s'
                                             % request.path_info)
