@@ -2292,8 +2292,8 @@ class ClusterController(ObjectController):
         #commented by joy on oct9,2015 for test purpose
         self.app.logger.thread_locals = logger_thread_locals
         #logger = self.app.logger.thread_locals
-        self.logger.info("2294 known_nodes :{}".format(known_nodes))
-        self.logger.info("2294 obj_nodes :{}".format(obj_nodes))
+        #self.logger.info("2294 known_nodes :{}".format(known_nodes))
+        #self.logger.info("2294 obj_nodes :{}".format(obj_nodes))
 
         conn = None
         for node in chain(known_nodes, obj_nodes):
