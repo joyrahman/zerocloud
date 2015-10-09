@@ -97,6 +97,7 @@ from zerocloud.tarstream import ExtractedFile
 from zerocloud.tarstream import Path
 from zerocloud.tarstream import ReadError
 from zerocloud.thread_pool import Zuid
+from macholib.mach_o import unknown_command
 
 
 ZEROVM_COMMANDS = ['open', 'api']
@@ -2291,7 +2292,9 @@ class ClusterController(ObjectController):
         #commented by joy on oct9,2015 for test purpose
         self.app.logger.thread_locals = logger_thread_locals
         #logger = self.app.logger.thread_locals
-        self.logger.info("2294 running inside create_exec_req")
+        self.logger.info("2294 known_nodes :{}".format(known_nodes))
+        self.logger.info("2294 obj_nodes :{}".format(obj_nodes))
+
         conn = None
         for node in chain(known_nodes, obj_nodes):
             # this loop is trying to connect to candidate object servers (for
