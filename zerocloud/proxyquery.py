@@ -2298,7 +2298,7 @@ class ClusterController(ObjectController):
             # execution) and send the execution request headers
 
             # if we get an exception, we can keep trying on other nodes
-            # self.logger.info("2283: Actual Execution")
+            self.logger.info("2283: Actual Execution")
             if ((known_nodes and node in known_nodes)
                 # this is the first node we are trying to use for
                 # co-location
@@ -2324,7 +2324,7 @@ class ClusterController(ObjectController):
                     # requests, read all headers until the body, processed the
                     # headers, and has now issued a read on the body
                     # but we haven't sent any data yet
-                    #self.logger.info("OK => ip:{} partition:{}".format(node['ip'],part))
+                    self.logger.info("OK => ip:{} partition:{}".format(node['ip'],part))
                     self.print_node_info(node, part)
                 self.logger.info("2326 conn:{}".format(conn))
                 with Timeout(self.middleware.node_timeout):
