@@ -973,7 +973,7 @@ class ClusterController(ObjectController):
                                       known_salts.get(location, '0')))
         for args in exec_list:
             # spawn executions in parallel
-            self.logger.info("line 966: spawing pile")
+            self.logger.info("line 976: spawing pile")
             pile.spawn(self._connect_exec_node, *args)
         result.extend([connection for connection in pile if connection])
         return result
@@ -2300,7 +2300,7 @@ class ClusterController(ObjectController):
                 # this is the first node we are trying to use for
                 # co-location
                 or (not known_nodes and cnode.location)):
-                # self.logger.info("Running upto line 2288 inside Actual Execution")
+                self.logger.info("Running upto line 2288 inside Actual Execution")
                 request_headers['x-nexe-colocated'] = \
                     '%s:%s:%s' % (salt, node['ip'], node['port'])
             #self.logger.info("ip:{} partition:{}".format(node['ip'], part))
@@ -2323,7 +2323,7 @@ class ClusterController(ObjectController):
                     # but we haven't sent any data yet
                     #self.logger.info("OK => ip:{} partition:{}".format(node['ip'],part))
                     self.print_node_info(node, part)
-                #self.logger.info("2305 conn:{}".format(conn))
+                self.logger.info("2326 conn:{}".format(conn))
                 with Timeout(self.middleware.node_timeout):
                     resp = conn.getexpect()
                 # node == the swift object server we are connected to
