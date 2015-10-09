@@ -833,7 +833,7 @@ class ClusterController(ObjectController):
         logger = self.app.logger.thread_locals
         i = 0
         for exec_request in exec_requests:
-            # self.logger.info("Running upto line {}:830 inside make_job_req loop".format(i))
+            self.logger.info("Running upto line {}:830 inside make_job_req loop".format(i))
             i += 1
             node = exec_request.node
             account, container, obj = (
