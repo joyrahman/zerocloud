@@ -918,7 +918,6 @@ class ClusterController(ObjectController):
                                                   container_partition,
                                                   container_nodes)
 
-            self.logger.info("Running upto line :921 inside make_job_req ")
             if node.skip_validation:
                 for hdr in exec_headers:
                     hdr['x-zerovm-valid'] = 'true'
@@ -974,7 +973,7 @@ class ClusterController(ObjectController):
                                       known_salts.get(location, '0')))
         for args in exec_list:
             # spawn executions in parallel
-            # self.logger.info("line 966: spawing pile")
+             self.logger.info("line 966: spawing pile")
             pile.spawn(self._connect_exec_node, *args)
         result.extend([connection for connection in pile if connection])
         return result
